@@ -10,23 +10,28 @@
 #define macro WORD_256() = takes(0) returns(256) { WORD_128() WORD_128() }
 #define macro WORD_512() = takes(0) returns(512) { WORD_256() WORD_256() }
 
+#define macro SEND_ETH() = takes(1) returns(0) {
+    // takes:             [cd_offset]
+    calldataload       // [send_data]
+    0x0 0x0 0x0        // [send_data, 0, 0, 0]
+    dup4               // [send_data, 0, 0, 0, send_data]
+    [AMT_OFFSET]       // [send_data, 0, 0, 0, send_data, offset]
+    shr                // [send_data, 0, 0, 0, amount]
+    0x0                // [send_data, 0, 0, 0, amount, 0]
+    swap5              // [0,         0, 0, 0, amount, send_data]
+    gas                // [0,         0, 0, 0, amount, send_data, gas]
+    // -- `send_data` can directly be interpreted as address because CALL ignores dirty bits in
+    // `address` parameter.
+    call               // [success]
+    // -- Ignore success, may recover left over value at end.
+    pop                // []
+}
+
 #define macro SEND_ETH_STEP() = takes(2) returns(1) {
     // takes:             [word, old_size]
     sub                // [rem_size]
     dup1               // [rem_size, rem_size]
-    calldataload       // [rem_size, send_data]
-    0x0 0x0 0x0        // [rem_size, send_data, 0, 0, 0]
-    dup4               // [rem_size, send_data, 0, 0, 0, send_data]
-    [AMT_OFFSET]       // [rem_size, send_data, 0, 0, 0, send_data, offset]
-    shr                // [rem_size, send_data, 0, 0, 0, amount]
-    0x0                // [rem_size, send_data, 0, 0, 0, amount, 0]
-    swap5              // [rem_size, 0,         0, 0, 0, amount, send_data]
-    gas                // [rem_size, 0,         0, 0, 0, amount, send_data, gas]
-    // -- `send_data` can directly be interpreted as address because CALL ignores dirty bits in
-    // `address` parameter.
-    call               // [rem_size, success]
-    // -- Ignore success, may recover left over value at end.
-    pop                // [rem_size]
+    SEND_ETH()         // [rem_size]
     // returns:           [rem_size]
 }
 
@@ -45,6 +50,9 @@
     // (Address, amount) pairs should be encoded packed as (uint96, address) in 32-byte chunks. No
     // ABI-style offset/length.
 
+
+    // Sets `msize = 0x20`.
+    0x0 mload               // [] <-- Technically pushes 0 to stack but never used so ignored.
 
     calldatasize            // [cdz]
     calldatasize            // [cdz, cdz]
@@ -67,7 +75,8 @@
     send256:                // [size_left]
         dup1                // [size_left, size_left]
         0x2000              // [size_left, size_left, 256*0x20]
-        gt                  // [size_left, 256*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send128 jumpi       // [size_left]
         0x0                 // [size_left, 0]
         mstore              // []
@@ -78,7 +87,8 @@
     send128:                // [size_left]
         dup1                // [size_left, size_left]
         0x1000              // [size_left, size_left, 128*0x20]
-        gt                  // [size_left, 128*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send64 jumpi        // [size_left]
         0x0                 // [size_left, 0]
         mstore              // []
@@ -89,7 +99,8 @@
     send64:                 // [size_left]
         dup1                // [size_left, size_left]
         0x800               // [size_left, size_left, 64*0x20]
-        gt                  // [size_left, 64*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send32 jumpi        // [size_left]
         0x0                 // [size_left, 0]
         mstore              // []
@@ -100,7 +111,8 @@
     send32:                 // [size_left]
         dup1                // [size_left, size_left]
         0x400               // [size_left, size_left, 32*0x20]
-        gt                  // [size_left, 32*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send16 jumpi        // [size_left]
         WORD_16()           // [size_left, 0x20 ...]
         swap16              // [0x20 ..., size_left]
@@ -112,7 +124,8 @@
     send16:                 // [size_left]
         dup1                // [size_left, size_left]
         0x200               // [size_left, size_left, 16*0x20]
-        gt                  // [size_left, 16*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send8 jumpi         // [size_left]
         WORD_16()           // [size_left, 0x20 ...]
         swap16              // [0x20 ..., size_left]
@@ -120,7 +133,8 @@
     send8:                  // [size_left]
         dup1                // [size_left, size_left]
         0x100               // [size_left, size_left, 8*0x20]
-        gt                  // [size_left, 8*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send4 jumpi         // [size_left]
         WORD_8()            // [size_left, 0x20 ...]
         swap8               // [0x20 ..., size_left]
@@ -128,7 +142,8 @@
     send4:                  // [size_left]
         dup1                // [size_left, size_left]
         0x80                // [size_left, size_left, 4*0x20]
-        gt                  // [size_left, 4*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send2 jumpi         // [size_left]
         WORD_4()            // [size_left, 0x20 ...]
         swap4               // [0x20 ..., size_left]
@@ -136,29 +151,25 @@
     send2:                  // [size_left]
         dup1                // [size_left, size_left]
         0x40                // [size_left, size_left, 2*0x20]
-        gt                  // [size_left, 2*0x20 > size_left]
+        and                 // [size_left, section_bit_set]
+        iszero              // [size_left, skip_section]
         send1 jumpi         // [size_left]
         WORD_2()            // [size_left, 0x20 ...]
         swap2               // [0x20 ..., size_left]
         SEND_ETH_STEP_2()   // [size_left']
     send1:                  // [size_left]
-        dup1                // [size_left, size_left]
-        0x20                // [size_left, size_left, 1*0x20]
-        gt                  // [size_left, 1*0x20 > size_left]
-        end jumpi           // [size_left]
-        msize               // [size_left, 0x20]
-        swap1               // [0x20, size_left]
-        SEND_ETH_STEP()     // [size_left']
-
+        iszero              // [skip_section]
+        end jumpi           // []
+        SEND_ETH()          // []
     end:
-        selfbalance         // [size_left, this.balance]
-        leftover jumpi      // [size_left]
-        stop                // [size_left] -- end
+        selfbalance         // [this.balance]
+        leftover jumpi      // []
+        stop                // [] -- end
     leftover:
-        0x0 0x0 0x0 0x0     // [size_left, 0, 0, 0, 0]
-        selfbalance         // [size_left, 0, 0, 0, 0, this.balance]
-        caller              // [size_left, 0, 0, 0, 0, this.balance, msg.sender]
-        gas                 // [size_left, 0, 0, 0, 0, this.balance, msg.sender, gas]
-        call                // [size_left, suc]
-        stop                // [size_left, suc] -- end
+        0x0 0x0 0x0 0x0     // [0, 0, 0, 0]
+        selfbalance         // [0, 0, 0, 0, this.balance]
+        caller              // [0, 0, 0, 0, this.balance, msg.sender]
+        gas                 // [0, 0, 0, 0, this.balance, msg.sender, gas]
+        call                // [suc]
+        stop                // [suc] -- end
 }
