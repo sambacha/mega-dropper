@@ -106,18 +106,27 @@
 
 #define macro TRANSFER_PACKED96() = takes(1) returns(0) {
     // takes:                         [cd_offset]
-    INIT_TRANSFER_FROM96()         // [token, cd_offset]
+    INIT_TRANSFER_FROM96()   // [token, cd_offset]
     // -- Prepare memory layout for `transfer` calls.
-    [PADDED_TRANSFER_SEL]          // [token, cd_offset, padded_transfer_sel]
-    0x1                            // [token, cd_offset, padded_transfer_sel, 1]
-    mstore                         // [token, cd_offset]
-}
+    [PADDED_TRANSFER_SEL]    // [token, cd_offset, padded_transfer_sel]
+    0x1                      // [token, cd_offset, padded_transfer_sel, 1]
+    mstore                   // [token, cd_offset]
 
-#define macro MAIN() = takes(0) returns(0) {
-    // Setup `transferFrom` and setup memory.
-    0x0                      // [0]
-    TRANSFER_PACKED96()      // [token, cd_offset]
+    /**
+     * ## Memory Layout
+     * [0x00:0x20)
+     *    0x00-0x01:  success flag
+     *    0x01-0x1c:  empty (zero bytes)
+     *    0x1c-0x20:  `transfer(address,uint256)` selector.
+     * [0x20:0x40) ABI encoded transfer recipient
+     * [0x40:0x60) ABI encoded transfer amount
+     *
+     * Additionally [0x21:0x41) is used as the target for the returned boolean from the `transfer` call.
+     * Byte 0x40 in memory needs to be 0x00 before the call and is set implicitly when `mstore(0x40,
+     * amount)` is executed in `TRANSFER_STEP96()`.
+     */
 
+    // -- Main unrolled transfer loop.
     CD_DIFF()                // [token, cd_offset]
     0x800                    // [token, cd_offset, bytes_rem, 64*0x20]
     gt                       // [token, cd_offset, 64*0x20 > bytes_rem]
@@ -179,4 +188,10 @@
             revert           // [token, cd_offset] -- end
         success:             // [token, cd_offset]
             stop             // [token, cd_offset] -- end
+}
+
+#define macro MAIN() = takes(0) returns(0) {
+    // Setup `transferFrom` and setup memory.
+    0x0                      // [0]
+    TRANSFER_PACKED96()      // [token, cd_offset]
 }
