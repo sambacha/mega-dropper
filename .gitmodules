@@ -7,3 +7,6 @@
 [submodule "lib/smol-huff-deployer"]
 	path = lib/smol-huff-deployer
 	url = https://github.com/philogy/smol-huff-deployer
+[submodule "lib/solady"]
+	path = lib/solady
+	url = https://github.com/Vectorized/solady

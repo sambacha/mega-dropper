@@ -126,8 +126,6 @@
         swap16              // [0, 0x20 ..., size_left]
         WORD_16()           // [0, 0x20 ..., size_left, 0x20 ...]
         swap16              // [0, 0x20 ..., size_left]
-        0x0                 // [0, 0x20 ..., 0]
-        mload               // [0, 0x20 ..., size_left]
         SEND_ETH_STEP_32()  // [0, size_left']
     send16:                 // [0, size_left]
         dup1                // [0, size_left, size_left]

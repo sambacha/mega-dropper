@@ -2,14 +2,22 @@
 pragma solidity 0.8.19;
 
 import {Test} from "forge-std/Test.sol";
-import {HuffDeployer} from "smol-huff-deployer/HuffDeployer.sol";
 
 /// @author philogy <https://github.com/philogy>
-contract LeBrokenTest is Test, HuffDeployer {
+contract ETHDropper is Test {
     address airdropper;
 
     function setUp() public {
-        airdropper = deploy("src/ETHAirdropper.huff");
+        string[] memory args = new string[](3);
+        args[0] = "huffc";
+        args[1] = "-b";
+        args[2] = "src/ETHAirdropper.huff";
+        bytes memory bytecode = vm.ffi(args);
+        address addr;
+        assembly {
+            addr := create(0, add(bytecode, 0x20), mload(bytecode))
+        }
+        airdropper = addr;
     }
 
     function testSingle() public {
@@ -25,16 +33,16 @@ contract LeBrokenTest is Test, HuffDeployer {
         assertEq(to1.balance, 1 ether);
     }
 
-    function testMany(uint256 total, bytes32 seed) public {
-        total = bound(total, 1, 400);
+    function test_fuzzingTransfers(uint256 totalRecipients, bytes32 seed) public {
+        totalRecipients = bound(totalRecipients, 1, 400);
 
-        address[] memory recipients = new address[](total);
-        uint256[] memory amounts = new uint[](total);
-        bytes32[] memory params = new bytes32[](total);
+        address[] memory recipients = new address[](totalRecipients);
+        uint256[] memory amounts = new uint[](totalRecipients);
+        bytes32[] memory params = new bytes32[](totalRecipients);
 
         uint256 total = 0;
 
-        for (uint256 i = 0; i < total; i++) {
+        for (uint256 i = 0; i < totalRecipients; i++) {
             seed = keccak256(abi.encodePacked(seed));
             address to = vm.addr(1 + i);
             recipients[i] = to;
@@ -50,7 +58,7 @@ contract LeBrokenTest is Test, HuffDeployer {
         (bool success,) = airdropper.call{value: total}(abi.encodePacked(params));
         assertTrue(success);
 
-        for (uint256 i; i < total; i++) {
+        for (uint256 i; i < totalRecipients; i++) {
             assertEq(recipients[i].balance, amounts[i]);
         }
     }

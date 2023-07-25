@@ -1,0 +1,182 @@
+/// @dev The selector of `transferFrom(address,address,uint)` and no fail flag `1` packed into 1 word.
+#define constant MEM0_START = 0x0100000000000000000000000000000000000000000000000000000023b872dd
+
+#define constant PADDED_TRANSFER_SEL = 0xa9059cbb00
+
+#define constant AMT_OFFSET = 0xa0
+
+#define constant AMT_MASK = 0xffffffffffffffffffffffff
+#define constant ADDR_OFFSET = 0x60
+
+#define macro ERC20_SUC_CHECK() = takes(2) returns(0) {
+    // takes:            [0, call_success]
+    returndatasize    // [0, call_success, rdz]
+    iszero            // [0, call_success, !rdz]
+    0x21              // [0, call_success, !rdz, 0x21]
+    mload             // [0, call_success, !rdz, bool_ret]
+    // If call success isn't `1` expression will return `0` anyway. Uses 1 less byte than `PUSH1 0x1`.
+    dup3              // [0, call_success, !rdz, bool_ret, 1*]
+    eq                // [0, call_success, !rdz, bool_ret == 1*]
+    or                // [0, call_success, !rdz || bool_ret == 1*]
+    and               // [0, total_suc]
+    mstore8           // []
+    // returns:          []
+}
+
+#define macro CD_DIFF() = takes(1) returns(2) {
+    // takes:        [cd_offset]
+    dup1          // [cd_offset, cd_offset]
+    calldatasize  // [cd_offset, cd_offset, cdz]
+    sub           // [cd_offset, bytes_rem]
+    // returns:      [cd_offset, bytes_rem]
+}
+
+#define macro ERC20_CALL(cd_size) = takes(2) returns(2) {
+    // takes:            [token, cd_offset]
+    0x0               // [token, cd_offset, 0]
+    0x20              // [token, cd_offset, 0, 0x20] 
+    0x21              // [token, cd_offset, 0, 0x20, 0x21]
+    <cd_size>         // [token, cd_offset, 0, 0x20, 0x21, cd_size]
+    0x1c              // [token, cd_offset, 0, 0x20, 0x21, cd_size, 0x1c]
+    0x0               // [token, cd_offset, 0, 0x20, 0x21, cd_size, 0x1c, 0]
+    dup8              // [token, cd_offset, 0, 0x20, 0x21, cd_size, 0x1c, 0, token]
+    gas               // [token, cd_offset, 0, 0x20, 0x21, cd_size, 0x1c, 0, token, gas]
+    call              // [token, cd_offset, 0, suc]
+    ERC20_SUC_CHECK() // [token, cd_offset]
+    0x20              // [token, cd_offset, 0x20]
+    add               // [token, cd_offset']
+    // returns:          [token, cd_offset']
+}
+
+#define macro INIT_TRANSFER_FROM96() = takes(1) returns(2) {
+    // takes:                         [cd_offset]
+    // -- Prepare first memory slot.
+    [MEM0_START]     // [cd_offset, init_mem_0]
+    msize            // [cd_offset, init_mem_0, 0]
+    mstore           // [cd_offset]
+    // -- Store `from = msg.sender` for `transferFrom`.
+    caller           // [cd_offset, msg.sender]
+    msize            // [cd_offset, msg.sender, 0x20]
+    mstore           // [cd_offset]
+    // -- Store `from = address(this)` for `transferFrom`.
+    address          // [cd_offset, this]
+    msize            // [cd_offset, this, 0x40]
+    mstore           // [cd_offset]
+    // -- Store `amount = total` for `transferFrom`.
+    dup1             // [cd_offset, cd_offset]
+    calldataload     // [cd_offset, token_total_packed]
+    dup1             // [cd_offset, token_total_packed, token_total_packed]
+    [AMT_OFFSET]     // [cd_offset, token_total_packed, token_total_packed, amount_offset]
+    shr              // [cd_offset, token_total_packed, total]
+    msize            // [cd_offset, token_total_packed, total, 0x60]
+    // From here `token_total_packed` treated as `token` address (CALL ignores dirty bits).
+    mstore           // [cd_offset, token]
+    swap1            // [token, cd_offset]
+    ERC20_CALL(0x64) // [token, cd_offset']
+    // returns:         [token, cd_offset']
+}
+
+#define macro TRANSFER_STEP96() = takes(2) returns(2) {
+    // takes:            [token, cd_offset]
+    // -- Get params from calldata.
+    dup1              // [token, cd_offset, cd_offset]
+    calldataload      // [token, cd_offset, packed_params]
+    // -- Decode and prepare address.
+    dup1              // [token, cd_offset, packed_params, packed_params]
+    [ADDR_OFFSET]     // [token, cd_offset, packed_params, packed_params, addr_offset]
+    shr               // [token, cd_offset, packed_params, addr]
+    0x20              // [token, cd_offset, packed_params, addr, 0x20]
+    mstore            // [token, cd_offset, packed_params]
+    // -- Decode and prepare amount.
+    [AMT_MASK]        // [token, cd_offset, packed_params, amt_mask]
+    and               // [token, cd_offset, amount]
+    0x40              // [token, cd_offset, amount, 0x40]
+    mstore            // [token, cd_offset]
+    // -- Do `transfer` call.
+    ERC20_CALL(0x44)  // [token, cd_offset']
+    // returns:          [token, cd_offset']
+}
+
+#define macro TRANSFER_STEP96_2()  = takes(2) returns(2) { TRANSFER_STEP96()    TRANSFER_STEP96()   }
+#define macro TRANSFER_STEP96_4()  = takes(2) returns(2) { TRANSFER_STEP96_2()  TRANSFER_STEP96_2() }
+#define macro TRANSFER_STEP96_8()  = takes(2) returns(2) { TRANSFER_STEP96_4()  TRANSFER_STEP96_4() }
+#define macro TRANSFER_STEP96_16() = takes(2) returns(2) { TRANSFER_STEP96_8()  TRANSFER_STEP96_8() }
+#define macro TRANSFER_STEP96_32() = takes(2) returns(2) { TRANSFER_STEP96_16() TRANSFER_STEP96_16() }
+#define macro TRANSFER_STEP96_64() = takes(2) returns(2) { TRANSFER_STEP96_32() TRANSFER_STEP96_32() }
+
+#define macro TRANSFER_PACKED96() = takes(1) returns(0) {
+    // takes:                         [cd_offset]
+    INIT_TRANSFER_FROM96()         // [token, cd_offset]
+    // -- Prepare memory layout for `transfer` calls.
+    [PADDED_TRANSFER_SEL]          // [token, cd_offset, padded_transfer_sel]
+    0x1                            // [token, cd_offset, padded_transfer_sel, 1]
+    mstore                         // [token, cd_offset]
+}
+
+#define macro MAIN() = takes(0) returns(0) {
+    // Setup `transferFrom` and setup memory.
+    0x0                      // [0]
+    TRANSFER_PACKED96()      // [token, cd_offset]
+
+    CD_DIFF()                // [token, cd_offset]
+    0x800                    // [token, cd_offset, bytes_rem, 64*0x20]
+    gt                       // [token, cd_offset, 64*0x20 > bytes_rem]
+    transfer96_32 jumpi      // [token, cd_offset]
+    transfer96_64:
+        TRANSFER_STEP96_64() // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x7ff                // [token, cd_offset, bytes_rem, 64*0x20-1]
+        lt                   // [token, cd_offset, bytes_rem >= 64*0x20]
+        transfer96_64 jumpi  // [token, cd_offset]
+
+    transfer96_32:           // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x400                // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        transfer96_16 jumpi  // [token, cd_offset]
+        TRANSFER_STEP96_32() // [token, cd_offset]
+    transfer96_16:           // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x200                // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        transfer96_8 jumpi   // [token, cd_offset]
+        TRANSFER_STEP96_16() // [token, cd_offset]
+    transfer96_8:            // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x100                // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        transfer96_4 jumpi   // [token, cd_offset]
+        TRANSFER_STEP96_8()  // [token, cd_offset]
+    transfer96_4:            // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x80                 // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        transfer96_2 jumpi   // [token, cd_offset]
+        TRANSFER_STEP96_4()  // [token, cd_offset]
+    transfer96_2:            // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x40                 // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        transfer96_1 jumpi   // [token, cd_offset]
+        TRANSFER_STEP96_2()  // [token, cd_offset]
+    transfer96_1:            // [token, cd_offset]
+        CD_DIFF()            // [token, cd_offset, bytes_rem]
+        0x20                 // [token, cd_offset, bytes_rem, 32*0x20]
+        and                  // [token, cd_offset, section_bit_set]
+        iszero               // [token, cd_offset, skip_section]
+        end jumpi            // [token, cd_offset]
+        TRANSFER_STEP96()    // [token, cd_offset]
+    end:                     // [token, cd_offset]
+        0x0 mload            // [token, cd_offset, mem0]
+        0x0 byte             // [token, cd_offset, suc_flag]
+        success jumpi        // [token, cd_offset]
+            0x0 0x0          // [token, cd_offset, 0, 0]
+            revert           // [token, cd_offset] -- end
+        success:             // [token, cd_offset]
+            stop             // [token, cd_offset] -- end
+}
