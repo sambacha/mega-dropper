@@ -11,7 +11,7 @@ contract ETHDropper is Test {
         string[] memory args = new string[](3);
         args[0] = "huffc";
         args[1] = "-b";
-        args[2] = "src/ETHAirdropper.huff";
+        args[2] = "src/ETHDropper.huff";
         bytes memory bytecode = vm.ffi(args);
         address addr;
         assembly {
