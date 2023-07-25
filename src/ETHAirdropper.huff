@@ -1,0 +1,164 @@
+#define constant AMT_OFFSET = 0xa0 // 160
+
+#define macro WORD_2() = takes(0) returns(2) { msize msize }
+#define macro WORD_4() = takes(0) returns(4) { WORD_2() WORD_2() }
+#define macro WORD_8() = takes(0) returns(8) { WORD_4() WORD_4() }
+#define macro WORD_16() = takes(0) returns(16) { WORD_8() WORD_8() }
+#define macro WORD_32() = takes(0) returns(32) { WORD_16() WORD_16() }
+#define macro WORD_64() = takes(0) returns(64) { WORD_32() WORD_32() }
+#define macro WORD_128() = takes(0) returns(128) { WORD_64() WORD_64() }
+#define macro WORD_256() = takes(0) returns(256) { WORD_128() WORD_128() }
+#define macro WORD_512() = takes(0) returns(512) { WORD_256() WORD_256() }
+
+#define macro SEND_ETH_STEP() = takes(2) returns(1) {
+    // takes:             [word, old_size]
+    sub                // [rem_size]
+    dup1               // [rem_size, rem_size]
+    calldataload       // [rem_size, send_data]
+    0x0 0x0 0x0        // [rem_size, send_data, 0, 0, 0]
+    dup4               // [rem_size, send_data, 0, 0, 0, send_data]
+    [AMT_OFFSET]       // [rem_size, send_data, 0, 0, 0, send_data, offset]
+    shr                // [rem_size, send_data, 0, 0, 0, amount]
+    0x0                // [rem_size, send_data, 0, 0, 0, amount, 0]
+    swap5              // [rem_size, 0,         0, 0, 0, amount, send_data]
+    gas                // [rem_size, 0,         0, 0, 0, amount, send_data, gas]
+    // -- `send_data` can directly be interpreted as address because CALL ignores dirty bits in
+    // `address` parameter.
+    call               // [rem_size, success]
+    // -- Ignore success, may recover left over value at end.
+    pop                // [rem_size]
+    // returns:           [rem_size]
+}
+
+#define macro SEND_ETH_STEP_2() = takes(3) returns(1) { SEND_ETH_STEP() SEND_ETH_STEP() }
+#define macro SEND_ETH_STEP_4() = takes(4) returns(1) { SEND_ETH_STEP_2() SEND_ETH_STEP_2() }
+#define macro SEND_ETH_STEP_8() = takes(5) returns(1) { SEND_ETH_STEP_4() SEND_ETH_STEP_4() }
+#define macro SEND_ETH_STEP_16() = takes(6) returns(1) { SEND_ETH_STEP_8() SEND_ETH_STEP_8() }
+#define macro SEND_ETH_STEP_32() = takes(7) returns(1) { SEND_ETH_STEP_16() SEND_ETH_STEP_16() }
+#define macro SEND_ETH_STEP_64() = takes(8) returns(1) { SEND_ETH_STEP_32() SEND_ETH_STEP_32() }
+#define macro SEND_ETH_STEP_128() = takes(9) returns(1) { SEND_ETH_STEP_64() SEND_ETH_STEP_64() }
+#define macro SEND_ETH_STEP_256() = takes(10) returns(1) { SEND_ETH_STEP_128() SEND_ETH_STEP_128() }
+#define macro SEND_ETH_STEP_512() = takes(11) returns(1) { SEND_ETH_STEP_256() SEND_ETH_STEP_256() }
+
+#define macro MAIN() = takes(0) returns(0) {
+    // No ABI selector or params, only function is to transfer ETH to a bunch of addresses.
+    // (Address, amount) pairs should be encoded packed as (uint96, address) in 32-byte chunks. No
+    // ABI-style offset/length.
+
+
+    calldatasize            // [cdz]
+    calldatasize            // [cdz, cdz]
+    0x4000                  // [cdz, cdz, 1 << 14]
+    gt                      // [cdz, 1 << 14 > cdz]
+    send256 jumpi           // [cdz]
+    loop512:                // [size_left]
+        0x0                 // [size_left, 0]
+        mstore              // []
+        WORD_512()          // [0x20 ...]
+        0x0                 // [0x20 ..., 0]
+        mload               // [0x20 ..., size_left]
+        SEND_ETH_STEP_512() // [size_left']
+
+        // Do-while loop check.
+        dup1                // [size_left', size_left']
+        0x3fff              // [size_left', size_left', 512*0x20 - 1]
+        lt                  // [size_left', size_left' >= 512*0x20]
+        loop512 jumpi       // [size_left]
+    send256:                // [size_left]
+        dup1                // [size_left, size_left]
+        0x2000              // [size_left, size_left, 256*0x20]
+        gt                  // [size_left, 256*0x20 > size_left]
+        send128 jumpi       // [size_left]
+        0x0                 // [size_left, 0]
+        mstore              // []
+        WORD_256()          // [0x20 ...]
+        0x0                 // [0x20 ..., 0]
+        mload               // [0x20 ..., size_left]
+        SEND_ETH_STEP_256() // [size_left']
+    send128:                // [size_left]
+        dup1                // [size_left, size_left]
+        0x1000              // [size_left, size_left, 128*0x20]
+        gt                  // [size_left, 128*0x20 > size_left]
+        send64 jumpi        // [size_left]
+        0x0                 // [size_left, 0]
+        mstore              // []
+        WORD_128()          // [0x20 ...]
+        0x0                 // [0x20 ..., 0]
+        mload               // [0x20 ..., size_left]
+        SEND_ETH_STEP_128() // [size_left']
+    send64:                 // [size_left]
+        dup1                // [size_left, size_left]
+        0x800               // [size_left, size_left, 64*0x20]
+        gt                  // [size_left, 64*0x20 > size_left]
+        send32 jumpi        // [size_left]
+        0x0                 // [size_left, 0]
+        mstore              // []
+        WORD_64()           // [0x20 ...]
+        0x0                 // [0x20 ..., 0]
+        mload               // [0x20 ..., size_left]
+        SEND_ETH_STEP_64()  // [size_left']
+    send32:                 // [size_left]
+        dup1                // [size_left, size_left]
+        0x400               // [size_left, size_left, 32*0x20]
+        gt                  // [size_left, 32*0x20 > size_left]
+        send16 jumpi        // [size_left]
+        WORD_16()           // [size_left, 0x20 ...]
+        swap16              // [0x20 ..., size_left]
+        WORD_16()           // [0x20 ..., size_left, 0x20 ...]
+        swap16              // [0x20 ..., size_left]
+        0x0                 // [0x20 ..., 0]
+        mload               // [0x20 ..., size_left]
+        SEND_ETH_STEP_32()  // [size_left']
+    send16:                 // [size_left]
+        dup1                // [size_left, size_left]
+        0x200               // [size_left, size_left, 16*0x20]
+        gt                  // [size_left, 16*0x20 > size_left]
+        send8 jumpi         // [size_left]
+        WORD_16()           // [size_left, 0x20 ...]
+        swap16              // [0x20 ..., size_left]
+        SEND_ETH_STEP_16()  // [size_left']
+    send8:                  // [size_left]
+        dup1                // [size_left, size_left]
+        0x100               // [size_left, size_left, 8*0x20]
+        gt                  // [size_left, 8*0x20 > size_left]
+        send4 jumpi         // [size_left]
+        WORD_8()            // [size_left, 0x20 ...]
+        swap8               // [0x20 ..., size_left]
+        SEND_ETH_STEP_8()   // [size_left']
+    send4:                  // [size_left]
+        dup1                // [size_left, size_left]
+        0x80                // [size_left, size_left, 4*0x20]
+        gt                  // [size_left, 4*0x20 > size_left]
+        send2 jumpi         // [size_left]
+        WORD_4()            // [size_left, 0x20 ...]
+        swap4               // [0x20 ..., size_left]
+        SEND_ETH_STEP_4()   // [size_left']
+    send2:                  // [size_left]
+        dup1                // [size_left, size_left]
+        0x40                // [size_left, size_left, 2*0x20]
+        gt                  // [size_left, 2*0x20 > size_left]
+        send1 jumpi         // [size_left]
+        WORD_2()            // [size_left, 0x20 ...]
+        swap2               // [0x20 ..., size_left]
+        SEND_ETH_STEP_2()   // [size_left']
+    send1:                  // [size_left]
+        dup1                // [size_left, size_left]
+        0x20                // [size_left, size_left, 1*0x20]
+        gt                  // [size_left, 1*0x20 > size_left]
+        end jumpi           // [size_left]
+        msize               // [size_left, 0x20]
+        swap1               // [0x20, size_left]
+        SEND_ETH_STEP()     // [size_left']
+
+    end:
+        selfbalance         // [size_left, this.balance]
+        leftover jumpi      // [size_left]
+        stop                // [size_left] -- end
+    leftover:
+        0x0 0x0 0x0 0x0     // [size_left, 0, 0, 0, 0]
+        selfbalance         // [size_left, 0, 0, 0, 0, this.balance]
+        caller              // [size_left, 0, 0, 0, 0, this.balance, msg.sender]
+        gas                 // [size_left, 0, 0, 0, 0, this.balance, msg.sender, gas]
+        call                // [size_left, suc]
+        stop                // [size_left, suc] -- end
+}
