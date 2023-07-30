@@ -43,13 +43,14 @@
     gas               // [token, cd_offset, 0, 0x20, 0x21, cd_size, 0x1c, 0, token, gas]
     call              // [token, cd_offset, 0, suc]
     ERC20_SUC_CHECK() // [token, cd_offset]
+    // -- Increase offset.
     0x20              // [token, cd_offset, 0x20]
     add               // [token, cd_offset']
     // returns:          [token, cd_offset']
 }
 
 #define macro INIT_TRANSFER_FROM96() = takes(1) returns(2) {
-    // takes:                         [cd_offset]
+    // takes:           [cd_offset]
     // -- Prepare first memory slot.
     [MEM0_START]     // [cd_offset, init_mem_0]
     msize            // [cd_offset, init_mem_0, 0]
@@ -105,7 +106,7 @@
 #define macro TRANSFER_STEP96_64() = takes(2) returns(2) { TRANSFER_STEP96_32() TRANSFER_STEP96_32() }
 
 #define macro TRANSFER_PACKED96() = takes(1) returns(0) {
-    // takes:                         [cd_offset]
+    // takes:                   [cd_offset]
     INIT_TRANSFER_FROM96()   // [token, cd_offset]
     // -- Prepare memory layout for `transfer` calls.
     [PADDED_TRANSFER_SEL]    // [token, cd_offset, padded_transfer_sel]
@@ -115,9 +116,9 @@
     /**
      * ## Memory Layout
      * [0x00:0x20)
-     *    0x00-0x01:  success flag
-     *    0x01-0x1c:  empty (zero bytes)
-     *    0x1c-0x20:  `transfer(address,uint256)` selector.
+     *   [0x00-0x01):  success flag
+     *   [0x01-0x1c):  empty (zero bytes)
+     *   [0x1c-0x20):  `transfer(address,uint256)` selector.
      * [0x20:0x40) ABI encoded transfer recipient
      * [0x40:0x60) ABI encoded transfer amount
      *
@@ -131,13 +132,12 @@
     0x800                    // [token, cd_offset, bytes_rem, 64*0x20]
     gt                       // [token, cd_offset, 64*0x20 > bytes_rem]
     transfer96_32 jumpi      // [token, cd_offset]
-    transfer96_64:
-        TRANSFER_STEP96_64() // [token, cd_offset]
-        CD_DIFF()            // [token, cd_offset, bytes_rem]
-        0x7ff                // [token, cd_offset, bytes_rem, 64*0x20-1]
-        lt                   // [token, cd_offset, bytes_rem >= 64*0x20]
-        transfer96_64 jumpi  // [token, cd_offset]
-
+    transfer96_64:           // [token, cd_offset] <--- do-while loop -----.
+        TRANSFER_STEP96_64() // [token, cd_offset]                         |
+        CD_DIFF()            // [token, cd_offset, bytes_rem]              |
+        0x7ff                // [token, cd_offset, bytes_rem, 64*0x20-1]   |
+        lt                   // [token, cd_offset, bytes_rem >= 64*0x20]   |
+        transfer96_64 jumpi  // [token, cd_offset] ------------------------/
     transfer96_32:           // [token, cd_offset]
         CD_DIFF()            // [token, cd_offset, bytes_rem]
         0x400                // [token, cd_offset, bytes_rem, 32*0x20]
@@ -193,5 +193,5 @@
 #define macro MAIN() = takes(0) returns(0) {
     // Setup `transferFrom` and setup memory.
     0x0                      // [0]
-    TRANSFER_PACKED96()      // [token, cd_offset]
+    TRANSFER_PACKED96()      // [] -- end
 }
